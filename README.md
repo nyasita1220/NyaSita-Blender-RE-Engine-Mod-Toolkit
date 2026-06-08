@@ -105,6 +105,21 @@ Blender 4.5 插件。为 RE 引擎游戏（Resident Evil 系列、Devil May Cry 
 
 ---
 
+### RE MDF 导出 `🟢 Object`
+
+调用 RE Mesh Editor 导出 MDF，并批量替换目标文件夹中所有同版本 `.mdf2.x` 文件。
+
+> 依赖：[RE Mesh Editor](https://github.com/NSACloud/RE-Mesh-Editor) 插件
+
+| 控件 | 说明 |
+|---|---|
+| **导出目录** | 选择 MDF 导出目标文件夹 |
+| **MDF 集合** | 选择场景中要导出的 MDF 集合 |
+| **游戏版本** | 选择目标游戏（决定 `.mdf2.x` 后缀） |
+| **导出并替换全部** | 导出后自动替换文件夹下所有同后缀文件 |
+
+---
+
 ### 清空与复制 `🟢 Object`
 
 | 按钮 | 说明 |
@@ -127,16 +142,21 @@ Blender 4.5 插件。为 RE 引擎游戏（Resident Evil 系列、Devil May Cry 
 ## 文件结构
 
 ```
-NyaSitaToolKit/
-├── __init__.py          # 插件主代码
-├── bone_presets/        # 骨骼预设 (JSON)
-├── name_pools/          # 名称池 (JSON)
-└── README.md
+NyaSita-Blender-RE-Engine-Mod-Toolkit/
+├── README.md
+└── NyaSitaToolKit/          # 安装时打包此文件夹为 .zip
+    ├── __init__.py
+    ├── bone_presets/        # 骨骼预设 (JSON)
+    └── name_pools/          # 名称池 (JSON)
 ```
 
 ## 兼容性
 
 Blender 4.5+
+
+## 依赖
+
+- [RE Mesh Editor](https://github.com/NSACloud/RE-Mesh-Editor) — 用于 MDF 导出功能
 
 ## License
 
