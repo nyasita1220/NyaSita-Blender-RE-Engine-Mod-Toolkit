@@ -1,0 +1,633 @@
+import json
+import os
+import re
+import bpy
+
+bl_info = {
+    "name": "NyaSita Toolkit",
+    "author": "NyaSita",
+    "version": (1, 5, 0),
+    "blender": (4, 5, 0),
+    "location": "View3D > Sidebar > NST Toolkit",
+    "description": "Merge + LOD rename + bone suffix & presets (zh/en)",
+    "category": "Object",
+}
+
+# --------------------------------------------------------------------------- #
+#   Paths
+# --------------------------------------------------------------------------- #
+ADDON_DIR = os.path.dirname(__file__)
+PRESETS_DIR = os.path.join(ADDON_DIR, "presets")
+
+
+def _ensure_presets_dir():
+    os.makedirs(PRESETS_DIR, exist_ok=True)
+
+
+# --------------------------------------------------------------------------- #
+#   i18n — all user-visible strings
+# --------------------------------------------------------------------------- #
+_STR = {
+    "panel_title":        {"zh_CN": "NST Toolkit",         "en_US": "NST Toolkit"},
+    "lang_label":         {"zh_CN": "语言",                "en_US": "Language"},
+    "merge_title":        {"zh_CN": "合并到活跃物体",      "en_US": "Merge to Active"},
+    "merge_name":         {"zh_CN": "名称模板",            "en_US": "Name Template"},
+    "merge_preview_hint": {"zh_CN": "选择物体以预览名称",  "en_US": "Select objects to preview name"},
+    "merge_btn":          {"zh_CN": "合并",                "en_US": "Merge"},
+    "lod_title":          {"zh_CN": "LOD 改名",            "en_US": "LOD Rename"},
+    "lod_lod":            {"zh_CN": "LOD",                 "en_US": "LOD"},
+    "lod_group":          {"zh_CN": "组",                  "en_US": "Group"},
+    "lod_sub":            {"zh_CN": "Sub",                 "en_US": "Sub"},
+    "lod_suffix":         {"zh_CN": "后缀",                "en_US": "Suffix"},
+    "lod_strip":          {"zh_CN": "去除 .NNN",           "en_US": "Strip .NNN"},
+    "lod_btn":            {"zh_CN": "应用到选中",          "en_US": "Apply to Selected"},
+    "bone_title":         {"zh_CN": "防脊柱移位工具",      "en_US": "Anti-Spine-Shift"},
+    "bone_suffix":        {"zh_CN": "后缀",                "en_US": "Suffix"},
+    "bone_add":           {"zh_CN": "添加后缀",            "en_US": "Add Suffix"},
+    "bone_revert":        {"zh_CN": "还原",                "en_US": "Revert"},
+    "bone_presets":       {"zh_CN": "预设",                "en_US": "Presets"},
+    "bone_save":          {"zh_CN": "保存",                "en_US": "Save"},
+    "bone_select":        {"zh_CN": "选择骨骼",            "en_US": "Select Bones"},
+    "bone_no_presets":    {"zh_CN": "暂无预设",            "en_US": "No presets saved yet"},
+    "bone_preset_dropdown": {"zh_CN": "预设",              "en_US": "Preset"},
+    # operator reports
+    "err_no_active":      {"zh_CN": "没有活跃物体",        "en_US": "No active object"},
+    "err_no_selected":    {"zh_CN": "请再选至少要合并的物体", "en_US": "Select objects to merge into the active"},
+    "warn_join_rename":   {"zh_CN": "合并成功但改名失败",  "en_US": "Join succeeded but rename failed"},
+    "info_merged":        {"zh_CN": "已合并 →",            "en_US": "Merged →"},
+    "info_renamed":       {"zh_CN": "已改名 {0} 个（{1} 个无需改）", "en_US": "Renamed {0} ({1} already up-to-date)"},
+    "info_renamed_all":   {"zh_CN": "所有 {0} 个已是最新", "en_US": "All {0} already up-to-date"},
+    "warn_no_bones":      {"zh_CN": "没有选中骨骼",        "en_US": "No bones selected"},
+    "info_bone_add":      {"zh_CN": "已给 {0} 根骨骼添加 '{1}'", "en_US": "Added '{1}' to {0} bone(s)"},
+    "info_bone_revert":   {"zh_CN": "已还原 {0} 根骨骼",   "en_US": "Reverted suffix on {0} bone(s)"},
+    "err_preset_name":    {"zh_CN": "请输入预设名",        "en_US": "Please enter a preset name"},
+    "err_no_bones":       {"zh_CN": "没有选中骨骼",        "en_US": "No bones selected"},
+    "info_preset_saved":  {"zh_CN": "预设 '{0}' 已保存（{1} 根骨骼）", "en_US": "Preset '{0}' saved ({1} bones)"},
+    "info_preset_updated": {"zh_CN": "预设 '{0}' 已更新（{1} 根骨骼）", "en_US": "Preset '{0}' updated ({1} bones)"},
+    "err_no_preset":      {"zh_CN": "未选择预设",          "en_US": "No preset selected"},
+    "err_preset_missing": {"zh_CN": "预设文件不存在: {0}", "en_US": "Preset file not found: {0}"},
+    "info_selected_bones": {"zh_CN": "已选中 {0} 根骨骼（来自 '{1}'）", "en_US": "Selected {0} bone(s) from '{1}'"},
+    "warn_no_match":      {"zh_CN": "没有匹配的骨骼（'{0}'）", "en_US": "No matching bones for '{0}'"},
+    "info_preset_deleted": {"zh_CN": "预设 '{0}' 已删除",  "en_US": "Preset '{0}' deleted"},
+    "err_delete_failed":  {"zh_CN": "无法删除 '{0}'",      "en_US": "Could not delete '{0}'"},
+    # save dialog
+    "dialog_preset_name": {"zh_CN": "预设名称",            "en_US": "Preset Name"},
+    "dialog_preset_desc": {"zh_CN": "保存在插件文件夹的 presets/ 中", "en_US": "Saved as .json in the addon presets/ folder"},
+}
+
+
+def _t(key: str, context=None) -> str:
+    """Return the translated string for *key* in the current language."""
+    if context is not None:
+        lang = getattr(context.scene, "nst_language", "zh_CN")
+    else:
+        lang = "zh_CN"
+    entry = _STR.get(key)
+    if entry:
+        return entry.get(lang, entry.get("en_US", key))
+    return key
+
+
+def _tfmt(key: str, context, *args) -> str:
+    """Translate + format with positional args."""
+    s = _t(key, context)
+    try:
+        return s.format(*args)
+    except (IndexError, KeyError):
+        return s
+
+
+# --------------------------------------------------------------------------- #
+#   Patterns
+# --------------------------------------------------------------------------- #
+_LOD_RE = re.compile(
+    r"^LOD_(?P<lod>\d+)_Group_(?P<group>\d+)_Sub_(?P<sub>\d+)__(?P<rest>.+)$"
+)
+_BLENDER_SUFFIX_RE = re.compile(r"\.\d{3}$")
+
+
+def _parse_lod_name(name: str):
+    m = _LOD_RE.match(name)
+    if m:
+        return (
+            int(m.group("lod")),
+            int(m.group("group")),
+            int(m.group("sub")),
+            m.group("rest"),
+        )
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════ #
+#   Bone helpers
+# ═══════════════════════════════════════════════════════════════════════════ #
+
+def _get_selected_bone_names(context):
+    obj = context.active_object
+    if not obj or obj.type != 'ARMATURE':
+        return []
+    if context.mode == 'EDIT_ARMATURE':
+        return [b.name for b in obj.data.edit_bones if b.select]
+    if context.mode == 'POSE':
+        return [b.name for b in context.selected_pose_bones]
+    return []
+
+
+def _select_bones_by_names(context, arm_obj, names):
+    if context.mode != 'EDIT_ARMATURE':
+        bpy.ops.object.mode_set(mode='EDIT')
+    ebones = arm_obj.data.edit_bones
+    for eb in ebones:
+        eb.select = False
+        eb.select_head = False
+        eb.select_tail = False
+    found = 0
+    for eb in ebones:
+        if eb.name in names:
+            eb.select = True
+            eb.select_head = True
+            eb.select_tail = True
+            found += 1
+    return found
+
+
+# ═══════════════════════════════════════════════════════════════════════════ #
+#   Preset file I/O
+# ═══════════════════════════════════════════════════════════════════════════ #
+
+def _preset_path(name: str) -> str:
+    safe = name.replace("/", "_").replace("\\", "_")
+    return os.path.join(PRESETS_DIR, f"{safe}.json")
+
+
+def _list_preset_names():
+    if not os.path.isdir(PRESETS_DIR):
+        return []
+    return sorted(f[:-5] for f in os.listdir(PRESETS_DIR) if f.endswith(".json"))
+
+
+def _load_preset(name: str):
+    path = _preset_path(name)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, list):
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return None
+
+
+def _save_preset(name: str, bone_names: list):
+    _ensure_presets_dir()
+    path = _preset_path(name)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(bone_names, fh, indent=2, ensure_ascii=False)
+
+
+def _delete_preset_file(name: str):
+    path = _preset_path(name)
+    if os.path.isfile(path):
+        os.remove(path)
+        return True
+    return False
+
+
+# ═══════════════════════════════════════════════════════════════════════════ #
+#   Enum callbacks
+# ═══════════════════════════════════════════════════════════════════════════ #
+
+def _preset_enum_items(scene, context):
+    items = []
+    for name in _list_preset_names():
+        items.append((name, name, ""))
+    if not items:
+        items.append(("__NONE__", "(no presets)", ""))
+    return items
+
+
+# ═══════════════════════════════════════════════════════════════════════════ #
+#   Operators — Merge & LOD
+# ═══════════════════════════════════════════════════════════════════════════ #
+
+class NST_OT_MergeToActive(bpy.types.Operator):
+    bl_idname = "nst.merge_to_active"
+    bl_label = "Merge to Active"
+    bl_description = "Join selected objects into the active object, renaming the result"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        scene = context.scene
+        active = context.active_object
+
+        if active is None:
+            self.report({'ERROR'}, _t("err_no_active", context))
+            return {'CANCELLED'}
+
+        selected = [o for o in context.selected_objects if o != active]
+        if not selected:
+            self.report({'ERROR'}, _t("err_no_selected", context))
+            return {'CANCELLED'}
+
+        source_name = selected[0].name
+        bpy.ops.object.join()
+
+        template = scene.nst_name_template
+        new_name = template.replace("@n", source_name)
+
+        result = context.view_layer.objects.active
+        if result:
+            result.name = new_name
+            self.report({'INFO'}, f"{_t('info_merged', context)} {new_name}")
+        else:
+            self.report({'WARNING'}, _t("warn_join_rename", context))
+
+        return {'FINISHED'}
+
+
+class NST_OT_RenameLOD(bpy.types.Operator):
+    bl_idname = "nst.rename_lod"
+    bl_label = "Rename LOD"
+    bl_description = "Replace LOD / Group / Sub numbers in selected object names"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        scene = context.scene
+        lod = scene.nst_lod_num
+        grp = scene.nst_group_num
+        sub = scene.nst_sub_num
+        suffix = scene.nst_lod_suffix
+        strip_suffix = scene.nst_strip_blender_suffix
+
+        count = 0
+        skipped = 0
+
+        for obj in context.selected_objects:
+            parsed = _parse_lod_name(obj.name)
+            if parsed:
+                _, _, _, rest = parsed
+                if strip_suffix:
+                    rest = _BLENDER_SUFFIX_RE.sub("", rest)
+                new_name = f"LOD_{lod}_Group_{grp}_Sub_{sub}__{rest}"
+            else:
+                base = _BLENDER_SUFFIX_RE.sub("", obj.name) if strip_suffix else obj.name
+                new_name = f"LOD_{lod}_Group_{grp}_Sub_{sub}__{base}{suffix}"
+
+            if obj.name != new_name:
+                obj.name = new_name
+                count += 1
+            else:
+                skipped += 1
+
+        if count:
+            self.report({'INFO'}, _tfmt("info_renamed", context, count, skipped))
+        else:
+            self.report({'INFO'}, _tfmt("info_renamed_all", context, skipped))
+
+        return {'FINISHED'}
+
+
+# ═══════════════════════════════════════════════════════════════════════════ #
+#   Operators — Bone rename
+# ═══════════════════════════════════════════════════════════════════════════ #
+
+class NST_OT_BoneAddSuffix(bpy.types.Operator):
+    bl_idname = "nst.bone_add_suffix"
+    bl_label = "Add Bone Suffix"
+    bl_description = "Add a suffix to all selected bone names"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'ARMATURE' and context.mode in ('EDIT_ARMATURE', 'POSE')
+
+    def execute(self, context):
+        suffix = context.scene.nst_bone_suffix
+        arm_data = context.active_object.data
+        selected = _get_selected_bone_names(context)
+
+        if not selected:
+            self.report({'WARNING'}, _t("warn_no_bones", context))
+            return {'CANCELLED'}
+
+        count = 0
+        for name in selected:
+            bone = arm_data.bones.get(name)
+            if bone and not bone.name.endswith(suffix):
+                bone.name = bone.name + suffix
+                count += 1
+
+        self.report({'INFO'}, _tfmt("info_bone_add", context, count, suffix))
+        return {'FINISHED'}
+
+
+class NST_OT_BoneRevertSuffix(bpy.types.Operator):
+    bl_idname = "nst.bone_revert_suffix"
+    bl_label = "Revert Bone Suffix"
+    bl_description = "Strip the suffix from all selected bone names"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'ARMATURE' and context.mode in ('EDIT_ARMATURE', 'POSE')
+
+    def execute(self, context):
+        suffix = context.scene.nst_bone_suffix
+        arm_data = context.active_object.data
+        selected = _get_selected_bone_names(context)
+
+        if not selected:
+            self.report({'WARNING'}, _t("warn_no_bones", context))
+            return {'CANCELLED'}
+
+        count = 0
+        for name in selected:
+            bone = arm_data.bones.get(name)
+            if bone and bone.name.endswith(suffix):
+                bone.name = bone.name[:-len(suffix)]
+                count += 1
+
+        self.report({'INFO'}, _tfmt("info_bone_revert", context, count))
+        return {'FINISHED'}
+
+
+# ═══════════════════════════════════════════════════════════════════════════ #
+#   Operators — Bone presets (file-based)
+# ═══════════════════════════════════════════════════════════════════════════ #
+
+class NST_OT_SaveBonePreset(bpy.types.Operator):
+    bl_idname = "nst.save_bone_preset"
+    bl_label = "Save Bone Preset"
+    bl_description = "Store current bone selection as a JSON preset file"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    preset_name: bpy.props.StringProperty(
+        name="Preset Name",
+        description="Name to save this preset under",
+        default="",
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'ARMATURE' and context.mode in ('EDIT_ARMATURE', 'POSE')
+
+    def invoke(self, context, event):
+        self.preset_name = ""
+        # Localise the dialog
+        d = _STR["dialog_preset_name"]
+        self.__class__.preset_name.keywords["name"] = d.get(
+            getattr(context.scene, "nst_language", "zh_CN"), d["en_US"]
+        )
+        d2 = _STR["dialog_preset_desc"]
+        self.__class__.preset_name.keywords["description"] = d2.get(
+            getattr(context.scene, "nst_language", "zh_CN"), d2["en_US"]
+        )
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        if not self.preset_name.strip():
+            self.report({'ERROR'}, _t("err_preset_name", context))
+            return {'CANCELLED'}
+
+        selected = _get_selected_bone_names(context)
+        if not selected:
+            self.report({'ERROR'}, _t("err_no_bones", context))
+            return {'CANCELLED'}
+
+        name = self.preset_name.strip()
+        presets = _list_preset_names()
+        existed = name in presets
+        _save_preset(name, selected)
+
+        if existed:
+            self.report({'INFO'}, _tfmt("info_preset_updated", context, name, len(selected)))
+        else:
+            self.report({'INFO'}, _tfmt("info_preset_saved", context, name, len(selected)))
+        return {'FINISHED'}
+
+
+class NST_OT_SelectBonePreset(bpy.types.Operator):
+    bl_idname = "nst.select_bone_preset"
+    bl_label = "Select Preset Bones"
+    bl_description = "Select all bones stored in the active preset"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'ARMATURE' and context.mode in ('EDIT_ARMATURE', 'POSE')
+
+    def execute(self, context):
+        preset_name = context.scene.nst_active_bone_preset
+        if not preset_name or preset_name == "__NONE__":
+            self.report({'ERROR'}, _t("err_no_preset", context))
+            return {'CANCELLED'}
+
+        names = _load_preset(preset_name)
+        if names is None:
+            self.report({'ERROR'}, _tfmt("err_preset_missing", context, preset_name))
+            return {'CANCELLED'}
+
+        found = _select_bones_by_names(context, context.active_object, set(names))
+
+        if found:
+            self.report({'INFO'}, _tfmt("info_selected_bones", context, found, preset_name))
+        else:
+            self.report({'WARNING'}, _tfmt("warn_no_match", context, preset_name))
+        return {'FINISHED'}
+
+
+class NST_OT_DeleteBonePreset(bpy.types.Operator):
+    bl_idname = "nst.delete_bone_preset"
+    bl_label = "Delete Bone Preset"
+    bl_description = "Delete the selected preset JSON file"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        name = context.scene.nst_active_bone_preset
+        return name and name != "__NONE__"
+
+    def execute(self, context):
+        name = context.scene.nst_active_bone_preset
+        if _delete_preset_file(name):
+            self.report({'INFO'}, _tfmt("info_preset_deleted", context, name))
+        else:
+            self.report({'ERROR'}, _tfmt("err_delete_failed", context, name))
+        return {'FINISHED'}
+
+
+# ═══════════════════════════════════════════════════════════════════════════ #
+#   Helpers
+# ═══════════════════════════════════════════════════════════════════════════ #
+
+def _get_first_selected_name(context):
+    active = context.active_object
+    if active is None:
+        return None
+    selected = [o for o in context.selected_objects if o != active]
+    return selected[0].name if selected else None
+
+
+# ═══════════════════════════════════════════════════════════════════════════ #
+#   UI Panel
+# ═══════════════════════════════════════════════════════════════════════════ #
+
+class NST_PT_Panel(bpy.types.Panel):
+    bl_label = "NST Toolkit"
+    bl_idname = "NST_PT_Panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "NST Toolkit"
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        T = lambda k: _t(k, context)
+
+        # ──  Language  ────────────────────────────────────────────────
+        row = layout.row(align=True)
+        row.label(text=T("lang_label"), icon='FILE_REFRESH')
+        row.prop(scene, "nst_language", text="")
+
+        # ──  Merge  ──────────────────────────────────────────────────
+        box = layout.box()
+        box.label(text=T("merge_title"), icon='AUTOMERGE_ON')
+        box.prop(scene, "nst_name_template", text=T("merge_name"))
+
+        source_name = _get_first_selected_name(context)
+        if source_name:
+            preview = scene.nst_name_template.replace("@n", source_name)
+            box.label(text=f"→ {preview}", icon='FILE_TEXT')
+        else:
+            box.label(text=T("merge_preview_hint"), icon='INFO')
+
+        box.operator("nst.merge_to_active", text=T("merge_btn"), icon='AUTOMERGE_ON')
+
+        # ──  LOD Rename  ─────────────────────────────────────────────
+        box = layout.box()
+        box.label(text=T("lod_title"), icon='OUTLINER_DATA_GP_LAYER')
+        row = box.row(align=True)
+        row.prop(scene, "nst_lod_num", text=T("lod_lod"))
+        row.prop(scene, "nst_group_num", text=T("lod_group"))
+        row.prop(scene, "nst_sub_num", text=T("lod_sub"))
+        box.prop(scene, "nst_lod_suffix", text=T("lod_suffix"))
+        box.prop(scene, "nst_strip_blender_suffix", text=T("lod_strip"))
+        box.operator("nst.rename_lod", text=T("lod_btn"), icon='CHECKMARK')
+
+        # ──  防脊柱移位工具  ─────────────────────────────────────────
+        box = layout.box()
+        box.label(text=T("bone_title"), icon='BONE_DATA')
+        box.prop(scene, "nst_bone_suffix", text=T("bone_suffix"))
+        row = box.row(align=True)
+        row.operator("nst.bone_add_suffix", text=T("bone_add"), icon='ADD')
+        row.operator("nst.bone_revert_suffix", text=T("bone_revert"), icon='LOOP_BACK')
+
+        # Presets
+        box.separator()
+        row = box.row(align=True)
+        row.label(text=T("bone_presets"), icon='PRESET')
+        row.operator("nst.save_bone_preset", text=T("bone_save"), icon='FILE_TICK')
+
+        presets_exist = bool(_list_preset_names())
+        if presets_exist:
+            row = box.row(align=True)
+            row.prop(scene, "nst_active_bone_preset", text="")
+            row.operator("nst.select_bone_preset", text=T("bone_select"), icon='RESTRICT_SELECT_OFF')
+            row.operator("nst.delete_bone_preset", text="", icon='X')
+        else:
+            box.label(text=T("bone_no_presets"), icon='INFO')
+
+
+# ═══════════════════════════════════════════════════════════════════════════ #
+#   Registration
+# ═══════════════════════════════════════════════════════════════════════════ #
+
+classes = [
+    NST_OT_MergeToActive,
+    NST_OT_RenameLOD,
+    NST_OT_BoneAddSuffix,
+    NST_OT_BoneRevertSuffix,
+    NST_OT_SaveBonePreset,
+    NST_OT_SelectBonePreset,
+    NST_OT_DeleteBonePreset,
+    NST_PT_Panel,
+]
+
+
+def register():
+    _ensure_presets_dir()
+
+    for cls in classes:
+        bpy.utils.register_class(cls)
+
+    # Language
+    bpy.types.Scene.nst_language = bpy.props.EnumProperty(
+        name="Language",
+        items=[
+            ("zh_CN", "中文", ""),
+            ("en_US", "English", ""),
+        ],
+        default="zh_CN",
+        description="UI language for NST Toolkit",
+    )
+
+    # Merge template
+    bpy.types.Scene.nst_name_template = bpy.props.StringProperty(
+        name="Name Template",
+        description="Merged-object name template — @n → first selected object's name",
+        default="LOD_1_Group_0_Sub_1__@n_Mat",
+    )
+
+    # LOD / Group / Sub numbers
+    bpy.types.Scene.nst_lod_num = bpy.props.IntProperty(
+        name="LOD", description="LOD number", default=1, min=0, soft_max=99,
+    )
+    bpy.types.Scene.nst_group_num = bpy.props.IntProperty(
+        name="Group", description="Group number", default=0, min=0, soft_max=99,
+    )
+    bpy.types.Scene.nst_sub_num = bpy.props.IntProperty(
+        name="Sub", description="Sub number", default=1, min=0, soft_max=99,
+    )
+    bpy.types.Scene.nst_lod_suffix = bpy.props.StringProperty(
+        name="Suffix", description="Appended for non-LOD-format names", default="_Mat",
+    )
+    bpy.types.Scene.nst_strip_blender_suffix = bpy.props.BoolProperty(
+        name="Strip .NNN", description="Remove Blender auto duplicate suffixes", default=True,
+    )
+
+    # Bone suffix
+    bpy.types.Scene.nst_bone_suffix = bpy.props.StringProperty(
+        name="Bone Suffix", description="Suffix to add / revert on selected bones", default="_dm",
+    )
+
+    # Active bone preset (dropdown, populated from JSON files on disk)
+    bpy.types.Scene.nst_active_bone_preset = bpy.props.EnumProperty(
+        name="Preset",
+        description="Select a saved bone preset",
+        items=_preset_enum_items,
+    )
+
+
+def unregister():
+    del bpy.types.Scene.nst_language
+    del bpy.types.Scene.nst_name_template
+    del bpy.types.Scene.nst_lod_num
+    del bpy.types.Scene.nst_group_num
+    del bpy.types.Scene.nst_sub_num
+    del bpy.types.Scene.nst_lod_suffix
+    del bpy.types.Scene.nst_strip_blender_suffix
+    del bpy.types.Scene.nst_bone_suffix
+    del bpy.types.Scene.nst_active_bone_preset
+
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
+
+
+if __name__ == "__main__":
+    register()
