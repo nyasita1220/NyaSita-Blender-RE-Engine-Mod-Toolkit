@@ -131,6 +131,12 @@ _STR = {
     "info_non_en_none":   {"zh_CN": "所有骨骼名称均为纯英文", "en_US": "All bone names are English-only"},
     "info_fix_symbols":   {"zh_CN": "修复了 {0} 根骨骼名称中的标点符号", "en_US": "Fixed symbols in {0} bone name(s)"},
     "info_fix_none":      {"zh_CN": "所有骨骼名称无需修复", "en_US": "No bone names needed fixing"},
+    "bone_check_fw_digit": {"zh_CN": "选中全角数字骨骼",  "en_US": "Select Fullwidth Digit Bones"},
+    "bone_fix_fw_digit":   {"zh_CN": "全角数字→半角",     "en_US": "Fullwidth Digits → ASCII"},
+    "info_fw_digit":       {"zh_CN": "选中了 {0} 根含全角/特殊数字的骨骼", "en_US": "Selected {0} bone(s) with fullwidth/special digits"},
+    "info_fw_digit_none":  {"zh_CN": "所有骨骼名称无不规范数字字符", "en_US": "No irregular digit characters found"},
+    "info_fix_fw_digit":   {"zh_CN": "已将 {0} 根骨骼的全角数字转换为半角", "en_US": "Converted fullwidth digits in {0} bone(s)"},
+    "info_fix_fw_none":    {"zh_CN": "没有需要转换的骨骼", "en_US": "No bones with fullwidth digits found"},
     # mdf export
     "mdf_title":          {"zh_CN": "RE MDF 导出",         "en_US": "RE MDF Export"},
     "mdf_folder":         {"zh_CN": "导出目录",            "en_US": "Export Folder"},
@@ -177,6 +183,43 @@ _RE_MESH_RE = re.compile(
     r"^Group_(?P<group>\d+)_Sub_(?P<sub>\d+)__(?P<rest>.+)$"
 )
 _BLENDER_SUFFIX_RE = re.compile(r"\.\d{3}$")
+
+# ── Fullwidth / special digit → ASCII digit map ──────────────────────────
+_FULLWIDTH_DIGIT_MAP = {}
+
+# Fullwidth digits: U+FF10-U+FF19 → 0-9 (most common in CJK text)
+for i in range(10):
+    _FULLWIDTH_DIGIT_MAP[chr(0xFF10 + i)] = str(i)
+
+# Mathematical bold digits: U+1D7CE-U+1D7D7
+for i in range(10):
+    _FULLWIDTH_DIGIT_MAP[chr(0x1D7CE + i)] = str(i)
+
+# Mathematical double-struck digits: U+1D7D8-U+1D7E1
+for i in range(10):
+    _FULLWIDTH_DIGIT_MAP[chr(0x1D7D8 + i)] = str(i)
+
+# Mathematical sans-serif digits: U+1D7E2-U+1D7EB
+for i in range(10):
+    _FULLWIDTH_DIGIT_MAP[chr(0x1D7E2 + i)] = str(i)
+
+# Mathematical sans-serif bold digits: U+1D7EC-U+1D7F5
+for i in range(10):
+    _FULLWIDTH_DIGIT_MAP[chr(0x1D7EC + i)] = str(i)
+
+# Mathematical monospace digits: U+1D7F6-U+1D7FF
+for i in range(10):
+    _FULLWIDTH_DIGIT_MAP[chr(0x1D7F6 + i)] = str(i)
+
+
+def _has_fullwidth_digit(name: str) -> bool:
+    """Return True if *name* contains any fullwidth / special digit character."""
+    return any(c in _FULLWIDTH_DIGIT_MAP for c in name)
+
+
+def _fix_fullwidth_digits(name: str) -> str:
+    """Replace fullwidth / special digits in *name* with ASCII digits."""
+    return "".join(_FULLWIDTH_DIGIT_MAP.get(c, c) for c in name)
 
 
 def _parse_lod_name(name: str):
@@ -1326,6 +1369,75 @@ class NST_OT_FixBoneSymbols(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class NST_OT_SelectFullwidthBones(bpy.types.Operator):
+    """Select bones whose names contain fullwidth / special digit characters
+    (e.g. １２３ → 123)."""
+    bl_idname = "nst.select_fullwidth_bones"
+    bl_label = "Select Fullwidth-Digit Bones"
+    bl_description = "Find and select all bones with fullwidth / special digit characters in their names"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'ARMATURE' and context.mode == 'EDIT_ARMATURE'
+
+    def execute(self, context):
+        arm_obj = context.active_object
+        # Deselect all first
+        for eb in arm_obj.data.edit_bones:
+            eb.select = False
+            eb.select_head = False
+            eb.select_tail = False
+
+        found = []
+        for eb in arm_obj.data.edit_bones:
+            if _has_fullwidth_digit(eb.name):
+                eb.select = True
+                eb.select_head = True
+                eb.select_tail = True
+                found.append(eb.name)
+
+        if found:
+            self.report({'INFO'}, _tfmt("info_fw_digit", context, len(found)))
+        else:
+            self.report({'INFO'}, _t("info_fw_digit_none", context))
+        return {'FINISHED'}
+
+
+class NST_OT_FixFullwidthDigits(bpy.types.Operator):
+    """Replace fullwidth / special digits in bone names with ASCII digits
+    (e.g. １２３ → 123)."""
+    bl_idname = "nst.fix_fullwidth_digits"
+    bl_label = "Fix Fullwidth Digits"
+    bl_description = "Convert fullwidth and special Unicode digits to standard ASCII digits in selected bone names"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'ARMATURE' and context.mode == 'EDIT_ARMATURE'
+
+    def execute(self, context):
+        arm_obj = context.active_object
+        count = 0
+
+        for eb in arm_obj.data.edit_bones:
+            if not eb.select:
+                continue
+            if _has_fullwidth_digit(eb.name):
+                new_name = _fix_fullwidth_digits(eb.name)
+                if new_name != eb.name:
+                    eb.name = new_name
+                    count += 1
+
+        if count:
+            self.report({'INFO'}, _tfmt("info_fix_fw_digit", context, count))
+        else:
+            self.report({'INFO'}, _t("info_fix_fw_none", context))
+        return {'FINISHED'}
+
+
 # ═══════════════════════════════════════════════════════════════════════════ #
 #   Operator — RE MDF Export & Replace
 # ═══════════════════════════════════════════════════════════════════════════ #
@@ -1535,6 +1647,9 @@ class NST_PT_Panel(bpy.types.Panel):
         row = box.row(align=True)
         row.operator("nst.select_non_english_bones", text=T("bone_check_non_en"), icon='FILE_TEXT')
         row.operator("nst.fix_bone_symbols", text=T("bone_check_fix"), icon='CHECKMARK')
+        row = box.row(align=True)
+        row.operator("nst.select_fullwidth_bones", text=T("bone_check_fw_digit"), icon='VIEWZOOM')
+        row.operator("nst.fix_fullwidth_digits", text=T("bone_fix_fw_digit"), icon='CHECKMARK')
 
         # ──  Noesis骨骼缩放转RE Mesh  ────────────────────────────────
         box = layout.box()
@@ -1594,6 +1709,8 @@ classes = [
     NST_OT_AntiSpineShift,
     NST_OT_SelectNonEnglishBones,
     NST_OT_FixBoneSymbols,
+    NST_OT_SelectFullwidthBones,
+    NST_OT_FixFullwidthDigits,
     NST_OT_CleanMesh,
     NST_OT_DuplicateCount,
     NST_OT_PartSeparation,
