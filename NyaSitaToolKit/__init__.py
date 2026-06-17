@@ -1349,7 +1349,7 @@ class NST_OT_FixBoneSymbols(bpy.types.Operator):
         count = 0
 
         for eb in arm_obj.data.edit_bones:
-            new_name = "".join(c if c.isascii() and (c.isalnum() or c == '_') else '_' for c in eb.name)
+            new_name = "".join(c if (c.isalnum() or c == '_') else '_' for c in eb.name)
             # Collapse multiple consecutive underscores
             while '__' in new_name:
                 new_name = new_name.replace('__', '_')
