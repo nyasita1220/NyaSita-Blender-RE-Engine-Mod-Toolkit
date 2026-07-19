@@ -6,5 +6,12 @@
   "LowerCottonBelt_Mat",
   "BootsRubber_Mat",
   "PropsMagicTape_Mat",
-  "Pants_Stitch_Mat"
+  "Pants_Stitch_Mat",
+  "Props_Mat",
+  "Skin_Mat",
+  "BootsCotton_Mat",
+  "Glove_Mat",
+  "PantsBelt_Mat",
+  "UpperMetal_Mat",
+  "ShirtsStech_Mat"
 ]

@@ -83,6 +83,12 @@ _STR = {
     "err_step_not_armature": {"zh_CN": "'{0}' 不是骨架",   "en_US": "'{0}' is not an armature"},
     "info_spine_done":    {"zh_CN": "约束链完成: {0} → Step1 → Step2 | Step1 已缩放 0.01 并应用", "en_US": "Chain done: {0} → Step1 → Step2 | Step1 scaled 0.01 & baked"},
     # clean & duplicate
+    "uv_jurg_title":      {"zh_CN": "添加 UVMapJurg",     "en_US": "Add UVMapJurg"},
+    "uv_jurg_btn":        {"zh_CN": "添加 UVMapJurg",     "en_US": "Add UVMapJurg"},
+    "info_uv_jurg_added": {"zh_CN": "已为 {0} 个物体添加 UVMapJurg（{1} 个已有）",
+                                                          "en_US": "Added UVMapJurg to {0} object(s) ({1} already had it)"},
+    "info_uv_jurg_all":   {"zh_CN": "所有 {0} 个物体已拥有 UVMapJurg",
+                                                          "en_US": "All {0} object(s) already have UVMapJurg"},
     "clean_title":        {"zh_CN": "清空与复制",          "en_US": "Clean & Duplicate"},
     "clean_btn":          {"zh_CN": "清空模型",            "en_US": "Clean Model"},
     "dup_count":          {"zh_CN": "数量",                "en_US": "Count"},
@@ -1293,6 +1299,41 @@ class NST_OT_StripSuffix(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class NST_OT_AddUVMapJurg(bpy.types.Operator):
+    """Add a UVMap named 'UVMapJurg' to every selected mesh object."""
+    bl_idname = "nst.add_uvmap_jurg"
+    bl_label = "Add UVMapJurg"
+    bl_description = "Create a UV layer named UVMapJurg on all selected mesh objects"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    UVMAP_NAME = "UVMapJurg"
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT' and any(
+            o.type == 'MESH' for o in context.selected_objects
+        )
+
+    def execute(self, context):
+        added = 0
+        skipped = 0
+        for obj in context.selected_objects:
+            if obj.type != 'MESH':
+                continue
+            mesh = obj.data
+            if self.UVMAP_NAME in mesh.uv_layers:
+                skipped += 1
+            else:
+                mesh.uv_layers.new(name=self.UVMAP_NAME)
+                added += 1
+
+        if added:
+            self.report({'INFO'}, _tfmt("info_uv_jurg_added", context, added, skipped))
+        else:
+            self.report({'INFO'}, _tfmt("info_uv_jurg_all", context, skipped))
+        return {'FINISHED'}
+
+
 # ═══════════════════════════════════════════════════════════════════════════ #
 #   Operators — Bone name check
 # ═══════════════════════════════════════════════════════════════════════════ #
@@ -1584,6 +1625,7 @@ class NST_PT_Panel(bpy.types.Panel):
         box.label(text=f"  {T('mode_object')}", icon='OBJECT_DATA')
         row = box.row(align=True)
         row.operator("nst.strip_suffix", text=T("quick_strip"), icon='X')
+        row.operator("nst.add_uvmap_jurg", text=T("uv_jurg_btn"), icon='GROUP_UVS')
 
         # ──  LOD Rename  ─────────────────────────────────────────────
         box = layout.box()
@@ -1715,6 +1757,7 @@ classes = [
     NST_OT_DuplicateCount,
     NST_OT_PartSeparation,
     NST_OT_StripSuffix,
+    NST_OT_AddUVMapJurg,
     NST_OT_RandomRename,
     NST_OT_EditNamePool,
     NST_OT_SaveNamePoolFromText,
